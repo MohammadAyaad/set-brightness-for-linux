@@ -1,0 +1,18 @@
+#!/bin/bash
+
+# Check if the brightness value is provided
+if [ -z "$1" ]; then
+  echo "Usage: $0 <brightness>"
+  exit 1
+fi
+
+# Assign the brightness value from the input parameter
+brightness=$1
+
+# Get the output display name
+output_display=$(xrandr | grep " connected" | cut -f1 -d " ")
+
+# Set the brightness for the output display
+xrandr --output "$output_display" --brightness "$brightness"
+
+echo "Brightness set to $brightness for display $output_display"
