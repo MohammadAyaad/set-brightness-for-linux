@@ -1,18 +1,95 @@
 #!/bin/bash
 
-# Check if the brightness value is provided
-if [ -z "$1" ]; then
-  echo "Usage: $0 <brightness>"
-  exit 1
+# Function to display help message
+show_help() {
+    echo "Usage: $0 [display_name] [brightness]"
+    echo
+    echo "Arguments:"
+    echo "  display_name: Name of the display (optional)."
+    echo "  brightness: New brightness level (optional, range: 0.0 - 1.0)."
+    echo
+    echo "If no parameters are provided, this script shows the available displays."
+    echo "If a display name is provided, it shows the current brightness."
+    echo "If a display name and brightness are provided, it sets the new brightness level."
+    echo
+    echo "Available displays:"
+    # List available displays from /sys/class/backlight
+    ls /sys/class/backlight | grep -v '^total'
+}
+
+# Check if arguments are provided
+if [ $# -eq 0 ]; then
+    show_help
+    exit 0
 fi
 
-# Assign the brightness value from the input parameter
-brightness=$1
+# Get the list of available display names from /sys/class/backlight
+displays=$(ls /sys/class/backlight | grep -v '^total')
 
-# Get the output display name
-output_display=$(xrandr | grep " connected" | cut -f1 -d " ")
+# Handle single display name parameter
+if [ $# -eq 1 ]; then
+    display_name=$1
+    
+    if echo "$displays" | grep -q "$display_name"; then
+        # Fetch the current brightness value of the display
+        brightness_file="/sys/class/backlight/$display_name/brightness"
+        max_brightness_file="/sys/class/backlight/$display_name/max_brightness"
+        
+        # Check if the paths exist
+        if [ -f "$brightness_file" ] && [ -f "$max_brightness_file" ]; then
+            current_brightness=$(cat "$brightness_file")
+            max_brightness=$(cat "$max_brightness_file")
+            current_brightness_float=$(echo "scale=2; $current_brightness / $max_brightness" | bc)
+            echo "Current brightness of $display_name: $current_brightness_float (Raw: $current_brightness out of $max_brightness)"
+        else
+            echo "Error: Unable to retrieve brightness for display: $display_name."
+        fi
+    else
+        echo "Error: Display '$display_name' not found."
+        exit 1
+    fi
+    exit 0
+fi
 
-# Set the brightness for the output display
-xrandr --output "$output_display" --brightness "$brightness"
+# Handle display name and brightness parameter
+if [ $# -eq 2 ]; then
+    display_name=$1
+    new_brightness=$2
 
-echo "Brightness set to $brightness for display $output_display"
+    # Validate brightness value (it must be a floating point number between 0.0 and 1.0)
+    if [[ ! "$new_brightness" =~ ^0(\.[0-9]+)?$|^1(\.0+)?$ ]]; then
+        echo "Error: Brightness must be a floating point number between 0.0 and 1.0."
+        exit 1
+    fi
+
+    if echo "$displays" | grep -q "$display_name"; then
+        # Fetch the current max brightness for the display
+        max_brightness_file="/sys/class/backlight/$display_name/max_brightness"
+        brightness_file="/sys/class/backlight/$display_name/brightness"
+        
+        # Check if the paths exist
+        if [ -f "$max_brightness_file" ] && [ -f "$brightness_file" ]; then
+            max_brightness=$(cat "$max_brightness_file")
+            
+            # Calculate the new brightness as an integer between 0 and max_brightness
+            new_brightness_scaled=$(echo "$new_brightness * $max_brightness" | bc)
+            new_brightness_int=$(echo "($new_brightness_scaled + 0.999999) / 1" | bc)  # Round up to nearest integer
+            
+            # Make sure the new brightness value is within the valid range (0 to max_brightness)
+            if [ "$new_brightness_int" -gt "$max_brightness" ]; then
+                new_brightness_int=$max_brightness
+            elif [ "$new_brightness_int" -lt 0 ]; then
+                new_brightness_int=0
+            fi
+            
+            # Set the new brightness
+            echo $new_brightness_int | sudo tee "$brightness_file" > /dev/null
+            echo "Brightness of $display_name set to $new_brightness_int (Scaled from $new_brightness)."
+        else
+            echo "Error: Unable to set brightness for display: $display_name."
+        fi
+    else
+        echo "Error: Display '$display_name' not found."
+        exit 1
+    fi
+fi
